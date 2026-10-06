@@ -73,3 +73,37 @@ and its issue-triage workflow (which does need to run on arbitrary-user
 content) checks out the base ref, runs on an egress-firewalled runner, and
 uses `--permission-mode auto`. `claude-cookbooks` has none of these
 mitigations on its `workflow_dispatch` path.
+
+## Actual results (2026-10-06, run against a live repo: github.com/mrityunjayk-hash/poc-ci-fork-checkout-mechanism)
+
+- **Run 1** — payload tried `gh pr review "$PR_NUMBER" --approve`. **Failed**:
+  `GraphQL: GitHub Actions is not permitted to approve pull requests.` This
+  is a GitHub platform-level restriction on the `addPullRequestReview`
+  mutation specifically, independent of the `pull-requests: write`
+  permission granted. **This retracts the "auto-approve via `gh pr
+  review --approve`" sub-claim** — it does not work via `GITHUB_TOKEN`,
+  on this repo or on `claude-cookbooks`' real `claude-pr-review.yml` (same
+  mechanism, same token type). Documented here rather than silently
+  dropped, since the program's rules require validated findings only.
+- **Run 2** — payload switched to the two primitives a GitHub-side
+  approval block does **not** cover:
+  1. `gh pr comment` (not `gh pr review`) — **succeeded**. Posted
+     [a fabricated "APPROVE, looks good to merge" comment](https://github.com/mrityunjayk-hash/poc-ci-fork-checkout-mechanism/pull/1#issuecomment-6014515528)
+     authored by `github-actions[bot]` — the repo's real bot identity —
+     entirely from attacker-controlled script content.
+  2. Outbound POST of a SHA-256 hash of the real job token (not the raw
+     secret) to an external endpoint I control — **succeeded**, payload
+     received: `{"poc":"ci-fork-checkout-mechanism","token_sha256":"8136...0f959","repo":"mrityunjayk-hash/poc-ci-fork-checkout-mechanism","pr":"1"}`.
+     Proves the secret-exfiltration primitive (maps to `WebFetch` +
+     `Bash(echo:*)` in `claude-model-check.yml` / `claude-link-review.yml`)
+     is real and not blocked by anything GitHub enforces platform-side.
+
+**Net assessment:** the "attacker auto-approves their own PR" headline claim
+does not hold (GitHub blocks it unconditionally). The underlying mechanism —
+fork-controlled file executes with a privileged CI token because
+`workflow_dispatch` checks out `refs/pull/<N>/head` — is real and
+demonstrated, with concrete impact via (a) a misleading bot-authored PR
+comment that could social-engineer a human reviewer into merging, and
+(b) exfiltration of whatever secret the job holds (the real repo's case:
+a live WIF-issued Claude API credential plus `GITHUB_TOKEN`), not merely a
+theoretical one.
