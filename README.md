@@ -107,3 +107,33 @@ comment that could social-engineer a human reviewer into merging, and
 (b) exfiltration of whatever secret the job holds (the real repo's case:
 a live WIF-issued Claude API credential plus `GITHUB_TOKEN`), not merely a
 theoretical one.
+
+## Run 3 — deeper pass: review-type variants + cross-PR blast radius (2026-10-06)
+
+Only `--approve` is blocked by GitHub's platform restriction. Tested the
+rest of the review API, plus whether the token is scoped to only the
+triggering PR:
+
+- `gh pr review <own PR> --comment` — **succeeded**
+- `gh pr review <own PR> --request-changes` — **succeeded**
+- `gh pr review <a second, completely unrelated PR, #2> --request-changes` —
+  **succeeded**. A second "victim" PR (#2, an innocuous unrelated change,
+  opened from a separate branch) was created specifically to test this. The
+  attacker payload, running because of PR #1's own dispatch, reached out and
+  posted a `CHANGES_REQUESTED` review on PR #2 — confirmed via
+  `gh pr view 2 --json reviewDecision` returning
+  `"reviewDecision":"CHANGES_REQUESTED"` afterward.
+- `gh pr comment <PR #2>` — **succeeded**, authored by `github-actions[bot]`:
+  https://github.com/mrityunjayk-hash/poc-ci-fork-checkout-mechanism/pull/2#issuecomment-6014698521
+
+**This matters more than the original framing.** The job's `GITHUB_TOKEN` is
+scoped to the whole repository, not to the PR that triggered the run. An
+attacker doesn't need their own malicious PR to be merged to cause harm —
+having it merely *reviewed* (the normal, intended maintainer action) is
+enough to let their payload reach out and attack **any other open PR in the
+repository**, blocking a legitimate contributor's unrelated work from
+merging via a fake "changes requested" from the project's own trusted bot
+identity. That's a repo-wide integrity/availability hit on the contribution
+pipeline, not a self-contained one, and it doesn't rely on fooling a human
+with a fake "LGTM" — it's a direct write-capability abuse that works
+regardless of whether anyone reads the comment.
