@@ -1,0 +1,58 @@
+name: Dispatch Review (PoC mirror of claude-cookbooks pattern)
+
+# Mirrors the exact structure of anthropics/claude-cookbooks's
+# claude-pr-review.yml / claude-model-check.yml / claude-link-review.yml:
+#   - automatic trigger skips fork PRs
+#   - workflow_dispatch escape hatch takes a bare pr_number, no fork/actor check
+#   - dispatch path's checkout pulls refs/pull/<N>/head (the FORK's tree)
+#   - a later step executes a repo-local command file out of that checkout
+#   - the job holds a real token with pull-requests: write
+#
+# The only substitution: where the real workflow invokes Claude Code against
+# a project-level slash-command markdown file read from the checkout, this
+# PoC invokes `bash` against a project-level shell script read from the same
+# checkout. The exploitable mechanism is identical either way: fork-controlled
+# file content, positioned by the checkout step, executes with the privileges
+# the base workflow granted the job.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    # Same guard as the real workflows: only run automatically for same-repo
+    # PRs, but workflow_dispatch has no such restriction.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set PR number
+        id: pr-number
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "number=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pr_number) || '' }}
+
+      - name: Run review command
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr-number.outputs.number }}
+        run: bash .github/commands/review.sh
